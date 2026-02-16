@@ -27,6 +27,7 @@ model User {
   updated_at DateTime @updatedAt @db.Timestamptz()
 
   refresh_tokens RefreshToken[]
+  audit_logs     AuditLog[]
 
   @@index([email])
   @@index([company_id])
@@ -46,4 +47,22 @@ model RefreshToken {
   @@index([token])
   @@index([user_id])
   @@map("refresh_tokens")
+}
+
+model AuditLog {
+  id         String   @id @default(uuid()) @db.Uuid
+  user_id    String?  @db.Uuid
+  action     String   @db.VarChar(100)
+  entity     String   @db.VarChar(100)
+  entity_id  String?  @db.Uuid
+  metadata   Json     @default("{}")
+  created_at DateTime @default(now()) @db.Timestamptz()
+
+  user User? @relation(fields: [user_id], references: [id], onDelete: SetNull)
+
+  @@index([user_id])
+  @@index([action])
+  @@index([entity, entity_id])
+  @@index([created_at])
+  @@map("audit_logs")
 }
