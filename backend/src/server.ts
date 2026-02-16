@@ -5,6 +5,7 @@ import helmet from 'helmet';
 import { config } from './config';
 import { errorHandler } from './middlewares/error.middleware';
 import userRoutes from './routes/user.routes';
+import authRoutes from './routes/auth.routes';
 
 const app = express();
 
@@ -19,6 +20,7 @@ app.get('/health', (_req, res) => {
 });
 
 // Rotas
+app.use('/api/auth', authRoutes);
 app.use('/api/users', userRoutes);
 
 // Erro 404

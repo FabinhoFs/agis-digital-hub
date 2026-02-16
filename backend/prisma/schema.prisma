@@ -26,7 +26,24 @@ model User {
   created_at DateTime @default(now()) @db.Timestamptz()
   updated_at DateTime @updatedAt @db.Timestamptz()
 
+  refresh_tokens RefreshToken[]
+
   @@index([email])
   @@index([company_id])
   @@map("users")
+}
+
+model RefreshToken {
+  id         String   @id @default(uuid()) @db.Uuid
+  user_id    String   @db.Uuid
+  token      String   @unique @db.VarChar(512)
+  expires_at DateTime @db.Timestamptz()
+  revoked    Boolean  @default(false)
+  created_at DateTime @default(now()) @db.Timestamptz()
+
+  user User @relation(fields: [user_id], references: [id], onDelete: Cascade)
+
+  @@index([token])
+  @@index([user_id])
+  @@map("refresh_tokens")
 }
