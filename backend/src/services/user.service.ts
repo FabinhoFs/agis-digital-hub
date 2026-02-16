@@ -115,6 +115,16 @@ export class UserService {
     if (dto.role) {
       this.assertCanAssignRole(actorRole, dto.role as Role, 'promover');
 
+      // Impedir rebaixamento do último ADMIN
+      if (existing.role === 'ADMIN' && dto.role !== 'ADMIN') {
+        const activeAdmins = await this.userRepository.countByRole('ADMIN', true);
+        if (activeAdmins <= 1) {
+          const error = new Error('Não é possível remover o último ADMIN do sistema');
+          (error as any).status = 403;
+          throw error;
+        }
+      }
+
       if (dto.role !== existing.role) {
         console.log(
           `[AUDIT] ROLE_CHANGED actor=${actor.id} target=${id} from=${existing.role} to=${dto.role} at=${new Date().toISOString()}`,
