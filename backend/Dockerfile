@@ -3,7 +3,7 @@ FROM node:20-alpine AS builder
 WORKDIR /app
 
 COPY package.json package-lock.json* ./
-RUN npm ci --ignore-scripts && npx prisma --version
+RUN npm install && npx prisma --version
 
 COPY prisma ./prisma
 RUN npx prisma generate
@@ -18,6 +18,9 @@ FROM node:20-alpine AS runner
 WORKDIR /app
 
 ENV NODE_ENV=production
+
+# Instalar wget para healthcheck
+RUN apk add --no-cache wget
 
 # Copiar apenas o necessário
 COPY --from=builder /app/package.json ./

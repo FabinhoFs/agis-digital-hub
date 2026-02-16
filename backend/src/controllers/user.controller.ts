@@ -11,22 +11,30 @@ export class UserController {
   };
 
   findById = async (req: AuthRequest, res: Response) => {
-    const user = await this.userService.findById(req.params.id);
+    const id = String(req.params.id);
+    const user = await this.userService.findById(id);
     res.json(user);
   };
 
   findMany = async (req: AuthRequest, res: Response) => {
-    const result = await this.userService.findMany(req.query as any);
+    const query = {
+      page: req.query.page ? Number(req.query.page) : undefined,
+      limit: req.query.limit ? Number(req.query.limit) : undefined,
+      search: req.query.search ? String(req.query.search) : undefined,
+    };
+    const result = await this.userService.findMany(query);
     res.json(result);
   };
 
   update = async (req: AuthRequest, res: Response) => {
-    const user = await this.userService.update(req.params.id, req.body, req.user!);
+    const id = String(req.params.id);
+    const user = await this.userService.update(id, req.body, req.user!);
     res.json(user);
   };
 
   deactivate = async (req: AuthRequest, res: Response) => {
-    const user = await this.userService.deactivate(req.params.id, req.user!);
+    const id = String(req.params.id);
+    const user = await this.userService.deactivate(id, req.user!);
     res.json(user);
   };
 }
