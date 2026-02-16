@@ -1,4 +1,4 @@
-import { Prisma, User } from '@prisma/client';
+import { Prisma, User, Role } from '@prisma/client';
 import { prisma } from '../config/prisma';
 import { PaginationQuery } from '../types';
 
@@ -59,5 +59,11 @@ export class UserRepository {
       where: { id },
       data: { ativo: false },
     });
+  }
+
+  async countByRole(role: Role, ativo?: boolean): Promise<number> {
+    const where: Prisma.UserWhereInput = { role };
+    if (ativo !== undefined) where.ativo = ativo;
+    return prisma.user.count({ where });
   }
 }
