@@ -107,7 +107,7 @@ export class AuthService {
 
   verifyAccessToken(token: string): JwtPayload {
     try {
-      return jwt.verify(token, config.jwtSecret, {
+      return jwt.verify(token, config.jwtSecret as string, {
         algorithms: ['HS256'],
         issuer: config.jwtIssuer,
         audience: config.jwtAudience,
@@ -122,8 +122,8 @@ export class AuthService {
   private async generateTokens(userId: string, email: string, role: string): Promise<AuthTokens> {
     const payload = { sub: userId, email, role };
 
-    const access_token = jwt.sign(payload, config.jwtSecret, {
-      expiresIn: config.jwtAccessExpiresIn,
+    const access_token = jwt.sign(payload, config.jwtSecret as string, {
+      expiresIn: config.jwtAccessExpiresIn as string,
       algorithm: 'HS256',
       issuer: config.jwtIssuer,
       audience: config.jwtAudience,
