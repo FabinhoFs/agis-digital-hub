@@ -1,4 +1,4 @@
-import jwt from 'jsonwebtoken';
+import jwt, { SignOptions } from 'jsonwebtoken';
 import crypto from 'crypto';
 import argon2 from 'argon2';
 import { config } from '../config';
@@ -106,8 +106,11 @@ export class AuthService {
   }
 
   verifyAccessToken(token: string): JwtPayload {
+    if (!config.jwtSecret) {
+      throw new Error('JWT_SECRET is not defined');
+    }
     try {
-      return jwt.verify(token, config.jwtSecret as string, {
+      return jwt.verify(token, config.jwtSecret, {
         algorithms: ['HS256'],
         issuer: config.jwtIssuer,
         audience: config.jwtAudience,
@@ -120,14 +123,20 @@ export class AuthService {
   }
 
   private async generateTokens(userId: string, email: string, role: string): Promise<AuthTokens> {
+    if (!config.jwtSecret) {
+      throw new Error('JWT_SECRET is not defined');
+    }
+
     const payload = { sub: userId, email, role };
 
-    const access_token = jwt.sign(payload, config.jwtSecret as string, {
-      expiresIn: config.jwtAccessExpiresIn as string,
+    const signOptions: SignOptions = {
+      expiresIn: config.jwtAccessExpiresIn as SignOptions['expiresIn'],
       algorithm: 'HS256',
       issuer: config.jwtIssuer,
       audience: config.jwtAudience,
-    });
+    };
+
+    const access_token = jwt.sign(payload, config.jwtSecret, signOptions);
 
     const refresh_token = crypto.randomBytes(64).toString('hex');
     const tokenHash = this.hashRefreshToken(refresh_token);
