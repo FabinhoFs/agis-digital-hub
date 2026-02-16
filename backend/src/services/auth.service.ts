@@ -4,29 +4,30 @@ import argon2 from 'argon2';
 import { config } from '../config';
 import { UserRepository } from '../repositories/user.repository';
 import { AuthRepository } from '../repositories/auth.repository';
+import { AuditService } from './audit.service';
+import { logger } from '../utils/logger';
 
 export interface JwtPayload {
   sub: string;
   email: string;
   role: string;
+  iss: string;
+  aud: string;
 }
 
 export interface AuthTokens {
   access_token: string;
   refresh_token: string;
-  expires_in: number; // seconds
+  expires_in: number;
 }
 
 export class AuthService {
   constructor(
     private readonly userRepository = new UserRepository(),
     private readonly authRepository = new AuthRepository(),
+    private readonly auditService = new AuditService(),
   ) {}
 
-  /**
-   * Gera HMAC-SHA256 do refresh token usando REFRESH_TOKEN_SECRET.
-   * Apenas o hash HMAC é armazenado no banco.
-   */
   private hashRefreshToken(token: string): string {
     return crypto
       .createHmac('sha256', config.refreshTokenSecret)
@@ -37,7 +38,6 @@ export class AuthService {
   async login(email: string, senha: string): Promise<AuthTokens> {
     const user = await this.userRepository.findByEmail(email.toLowerCase().trim());
 
-    // Mensagem genérica para não revelar se email ou senha estão errados
     const genericError = new Error('Credenciais inválidas');
     (genericError as any).status = 401;
 
@@ -49,7 +49,13 @@ export class AuthService {
 
     const tokens = await this.generateTokens(user.id, user.email, user.role);
 
-    console.log(`[AUDIT] LOGIN user_id=${user.id} email=${user.email} at=${new Date().toISOString()}`);
+    logger.info({ user_id: user.id, email: user.email }, 'LOGIN');
+    await this.auditService.log({
+      user_id: user.id,
+      action: 'LOGIN',
+      entity: 'auth',
+      metadata: { email: user.email },
+    });
 
     return tokens;
   }
@@ -64,7 +70,6 @@ export class AuthService {
       throw error;
     }
 
-    // Revoke old token (rotation)
     await this.authRepository.revokeRefreshToken(tokenHash);
 
     const user = await this.userRepository.findById(stored.user_id);
@@ -76,7 +81,12 @@ export class AuthService {
 
     const tokens = await this.generateTokens(user.id, user.email, user.role);
 
-    console.log(`[AUDIT] REFRESH user_id=${user.id} at=${new Date().toISOString()}`);
+    logger.info({ user_id: user.id }, 'REFRESH');
+    await this.auditService.log({
+      user_id: user.id,
+      action: 'REFRESH',
+      entity: 'auth',
+    });
 
     return tokens;
   }
@@ -86,13 +96,22 @@ export class AuthService {
     const stored = await this.authRepository.findRefreshToken(tokenHash);
     if (stored && !stored.revoked) {
       await this.authRepository.revokeRefreshToken(tokenHash);
-      console.log(`[AUDIT] LOGOUT user_id=${stored.user_id} at=${new Date().toISOString()}`);
+      logger.info({ user_id: stored.user_id }, 'LOGOUT');
+      await this.auditService.log({
+        user_id: stored.user_id,
+        action: 'LOGOUT',
+        entity: 'auth',
+      });
     }
   }
 
   verifyAccessToken(token: string): JwtPayload {
     try {
-      return jwt.verify(token, config.jwtSecret) as JwtPayload;
+      return jwt.verify(token, config.jwtSecret, {
+        algorithms: ['HS256'],
+        issuer: config.jwtIssuer,
+        audience: config.jwtAudience,
+      }) as JwtPayload;
     } catch {
       const error = new Error('Token inválido ou expirado');
       (error as any).status = 401;
@@ -101,14 +120,15 @@ export class AuthService {
   }
 
   private async generateTokens(userId: string, email: string, role: string): Promise<AuthTokens> {
-    const payload: JwtPayload = { sub: userId, email, role };
+    const payload = { sub: userId, email, role };
 
     const access_token = jwt.sign(payload, config.jwtSecret, {
       expiresIn: config.jwtAccessExpiresIn,
       algorithm: 'HS256',
+      issuer: config.jwtIssuer,
+      audience: config.jwtAudience,
     });
 
-    // Gera token raw (retornado ao cliente) e armazena apenas o HMAC
     const refresh_token = crypto.randomBytes(64).toString('hex');
     const tokenHash = this.hashRefreshToken(refresh_token);
 
@@ -124,7 +144,7 @@ export class AuthService {
     return {
       access_token,
       refresh_token,
-      expires_in: 900, // 15 minutes in seconds
+      expires_in: 900,
     };
   }
 }

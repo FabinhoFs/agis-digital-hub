@@ -1,9 +1,11 @@
 import argon2 from 'argon2';
 import { Role } from '@prisma/client';
 import { UserRepository } from '../repositories/user.repository';
+import { AuditService } from './audit.service';
 import { CreateUserDTO, UpdateUserDTO, UserResponse, PaginationQuery, PaginatedResponse } from '../types';
 import { toLocalISO } from '../utils/timezone';
 import { getRoleLevel, isRoleAbove } from '../utils/roles';
+import { logger } from '../utils/logger';
 import { User } from '@prisma/client';
 
 interface AuthenticatedUser {
@@ -13,7 +15,10 @@ interface AuthenticatedUser {
 }
 
 export class UserService {
-  constructor(private readonly userRepository = new UserRepository()) {}
+  constructor(
+    private readonly userRepository = new UserRepository(),
+    private readonly auditService = new AuditService(),
+  ) {}
 
   private toResponse(user: User): UserResponse {
     return {
@@ -32,8 +37,7 @@ export class UserService {
     const actorRole = actor.role as Role;
     const targetRole = dto.role || 'USUARIO';
 
-    // Impedir criação de role superior ou igual ao ator (exceto ADMIN criando ADMIN)
-    this.assertCanAssignRole(actorRole, targetRole as Role, 'criar');
+    this.assertCanAssignRole(actorRole, targetRole as Role, 'criar', actor.id);
 
     const existing = await this.userRepository.findByEmail(dto.email);
     if (existing) {
@@ -57,9 +61,14 @@ export class UserService {
       company_id: dto.company_id,
     });
 
-    console.log(
-      `[AUDIT] USER_CREATED actor=${actor.id} target=${user.id} role=${targetRole} at=${new Date().toISOString()}`,
-    );
+    logger.info({ actor_id: actor.id, target_id: user.id, role: targetRole }, 'USER_CREATED');
+    await this.auditService.log({
+      user_id: actor.id,
+      action: 'USER_CREATED',
+      entity: 'user',
+      entity_id: user.id,
+      metadata: { role: targetRole, email: user.email },
+    });
 
     return this.toResponse(user);
   }
@@ -82,12 +91,7 @@ export class UserService {
 
     return {
       data: users.map(u => this.toResponse(u)),
-      meta: {
-        total,
-        page,
-        limit,
-        totalPages: Math.ceil(total / limit),
-      },
+      meta: { total, page, limit, totalPages: Math.ceil(total / limit) },
     };
   }
 
@@ -101,21 +105,23 @@ export class UserService {
       throw error;
     }
 
-    // Não pode alterar usuário com role >= à sua (exceto ADMIN)
     if (!isRoleAbove(actorRole, existing.role) && actorRole !== 'ADMIN') {
-      console.log(
-        `[AUDIT] ESCALATION_BLOCKED actor=${actor.id}(${actorRole}) tried to update target=${id}(${existing.role}) at=${new Date().toISOString()}`,
-      );
+      logger.warn({ actor_id: actor.id, actor_role: actorRole, target_id: id, target_role: existing.role }, 'ESCALATION_BLOCKED');
+      await this.auditService.log({
+        user_id: actor.id,
+        action: 'ESCALATION_BLOCKED',
+        entity: 'user',
+        entity_id: id,
+        metadata: { actor_role: actorRole, target_role: existing.role, operation: 'update' },
+      });
       const error = new Error('Não é possível alterar usuário com permissão igual ou superior');
       (error as any).status = 403;
       throw error;
     }
 
-    // Se está alterando role, verificar se pode atribuir a nova role
     if (dto.role) {
-      this.assertCanAssignRole(actorRole, dto.role as Role, 'promover');
+      this.assertCanAssignRole(actorRole, dto.role as Role, 'promover', actor.id);
 
-      // Impedir rebaixamento do último ADMIN
       if (existing.role === 'ADMIN' && dto.role !== 'ADMIN') {
         const activeAdmins = await this.userRepository.countByRole('ADMIN', true);
         if (activeAdmins <= 1) {
@@ -126,9 +132,14 @@ export class UserService {
       }
 
       if (dto.role !== existing.role) {
-        console.log(
-          `[AUDIT] ROLE_CHANGED actor=${actor.id} target=${id} from=${existing.role} to=${dto.role} at=${new Date().toISOString()}`,
-        );
+        logger.info({ actor_id: actor.id, target_id: id, from: existing.role, to: dto.role }, 'ROLE_CHANGED');
+        await this.auditService.log({
+          user_id: actor.id,
+          action: 'ROLE_CHANGED',
+          entity: 'user',
+          entity_id: id,
+          metadata: { from: existing.role, to: dto.role },
+        });
       }
     }
 
@@ -163,7 +174,6 @@ export class UserService {
   async deactivate(id: string, actor: AuthenticatedUser): Promise<UserResponse> {
     const actorRole = actor.role as Role;
 
-    // Não pode desativar a si mesmo
     if (actor.id === id) {
       const error = new Error('Não é possível desativar o próprio usuário');
       (error as any).status = 403;
@@ -177,17 +187,20 @@ export class UserService {
       throw error;
     }
 
-    // Não pode desativar usuário com role >= à sua (exceto ADMIN com target não-ADMIN)
     if (!isRoleAbove(actorRole, existing.role) && !(actorRole === 'ADMIN' && existing.role !== 'ADMIN')) {
-      console.log(
-        `[AUDIT] DEACTIVATION_BLOCKED actor=${actor.id}(${actorRole}) target=${id}(${existing.role}) at=${new Date().toISOString()}`,
-      );
+      logger.warn({ actor_id: actor.id, actor_role: actorRole, target_id: id, target_role: existing.role }, 'DEACTIVATION_BLOCKED');
+      await this.auditService.log({
+        user_id: actor.id,
+        action: 'DEACTIVATION_BLOCKED',
+        entity: 'user',
+        entity_id: id,
+        metadata: { actor_role: actorRole, target_role: existing.role },
+      });
       const error = new Error('Não é possível desativar usuário com permissão igual ou superior');
       (error as any).status = 403;
       throw error;
     }
 
-    // Impedir remoção do último ADMIN ativo
     if (existing.role === 'ADMIN') {
       const activeAdmins = await this.userRepository.countByRole('ADMIN', true);
       if (activeAdmins <= 1) {
@@ -199,25 +212,29 @@ export class UserService {
 
     const user = await this.userRepository.softDelete(id);
 
-    console.log(
-      `[AUDIT] USER_DEACTIVATED actor=${actor.id} target=${id} role=${existing.role} at=${new Date().toISOString()}`,
-    );
+    logger.info({ actor_id: actor.id, target_id: id, target_role: existing.role }, 'USER_DEACTIVATED');
+    await this.auditService.log({
+      user_id: actor.id,
+      action: 'USER_DEACTIVATED',
+      entity: 'user',
+      entity_id: id,
+      metadata: { role: existing.role, email: existing.email },
+    });
 
     return this.toResponse(user);
   }
 
-  /**
-   * Verifica se o ator pode atribuir a role alvo.
-   * - ADMIN pode atribuir qualquer role (incluindo ADMIN).
-   * - Demais só podem atribuir roles estritamente inferiores à sua.
-   */
-  private assertCanAssignRole(actorRole: Role, targetRole: Role, action: string): void {
-    if (actorRole === 'ADMIN') return; // ADMIN pode tudo
+  private assertCanAssignRole(actorRole: Role, targetRole: Role, action: string, actorId: string): void {
+    if (actorRole === 'ADMIN') return;
 
     if (getRoleLevel(targetRole) >= getRoleLevel(actorRole)) {
-      console.log(
-        `[AUDIT] ESCALATION_BLOCKED role=${actorRole} tried to ${action} role=${targetRole} at=${new Date().toISOString()}`,
-      );
+      logger.warn({ actor_id: actorId, actor_role: actorRole, target_role: targetRole }, 'ESCALATION_BLOCKED');
+      this.auditService.log({
+        user_id: actorId,
+        action: 'ESCALATION_BLOCKED',
+        entity: 'user',
+        metadata: { actor_role: actorRole, target_role: targetRole, operation: action },
+      });
       const error = new Error(`Não é possível ${action} usuário com role igual ou superior à sua`);
       (error as any).status = 403;
       throw error;
