@@ -23,6 +23,17 @@ export class AuthService {
     private readonly authRepository = new AuthRepository(),
   ) {}
 
+  /**
+   * Gera HMAC-SHA256 do refresh token usando REFRESH_TOKEN_SECRET.
+   * Apenas o hash HMAC é armazenado no banco.
+   */
+  private hashRefreshToken(token: string): string {
+    return crypto
+      .createHmac('sha256', config.refreshTokenSecret)
+      .update(token)
+      .digest('hex');
+  }
+
   async login(email: string, senha: string): Promise<AuthTokens> {
     const user = await this.userRepository.findByEmail(email.toLowerCase().trim());
 
@@ -44,7 +55,8 @@ export class AuthService {
   }
 
   async refresh(refreshToken: string): Promise<AuthTokens> {
-    const stored = await this.authRepository.findRefreshToken(refreshToken);
+    const tokenHash = this.hashRefreshToken(refreshToken);
+    const stored = await this.authRepository.findRefreshToken(tokenHash);
 
     if (!stored || stored.revoked || stored.expires_at < new Date()) {
       const error = new Error('Refresh token inválido ou expirado');
@@ -53,7 +65,7 @@ export class AuthService {
     }
 
     // Revoke old token (rotation)
-    await this.authRepository.revokeRefreshToken(refreshToken);
+    await this.authRepository.revokeRefreshToken(tokenHash);
 
     const user = await this.userRepository.findById(stored.user_id);
     if (!user || !user.ativo) {
@@ -70,9 +82,10 @@ export class AuthService {
   }
 
   async logout(refreshToken: string): Promise<void> {
-    const stored = await this.authRepository.findRefreshToken(refreshToken);
+    const tokenHash = this.hashRefreshToken(refreshToken);
+    const stored = await this.authRepository.findRefreshToken(tokenHash);
     if (stored && !stored.revoked) {
-      await this.authRepository.revokeRefreshToken(refreshToken);
+      await this.authRepository.revokeRefreshToken(tokenHash);
       console.log(`[AUDIT] LOGOUT user_id=${stored.user_id} at=${new Date().toISOString()}`);
     }
   }
@@ -95,14 +108,16 @@ export class AuthService {
       algorithm: 'HS256',
     });
 
+    // Gera token raw (retornado ao cliente) e armazena apenas o HMAC
     const refresh_token = crypto.randomBytes(64).toString('hex');
+    const tokenHash = this.hashRefreshToken(refresh_token);
 
     const expiresAt = new Date();
     expiresAt.setDate(expiresAt.getDate() + 7);
 
     await this.authRepository.createRefreshToken({
       user_id: userId,
-      token: refresh_token,
+      token: tokenHash,
       expires_at: expiresAt,
     });
 

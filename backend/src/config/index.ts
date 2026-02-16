@@ -13,6 +13,9 @@ export const config = {
   jwtAccessExpiresIn: process.env.JWT_ACCESS_EXPIRES_IN || '15m',
   jwtRefreshExpiresIn: process.env.JWT_REFRESH_EXPIRES_IN || '7d',
 
+  // Refresh Token HMAC
+  refreshTokenSecret: process.env.REFRESH_TOKEN_SECRET!,
+
   // Rate limit
   loginRateLimitWindow: parseInt(process.env.LOGIN_RATE_LIMIT_WINDOW || '900000', 10), // 15min
   loginRateLimitMax: parseInt(process.env.LOGIN_RATE_LIMIT_MAX || '5', 10),
